@@ -79,3 +79,9 @@ wf.pause()
 
 wf.resume()
 ```
+
+### Build & Publish
+```bash
+poetry install
+poetry publish --build
+```
