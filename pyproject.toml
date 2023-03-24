@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "sca_rhythm"
+version = "0.1.3"
+description = "Create and manage workflows using Celery tasks"
+authors = ["Deepak Duggirala <deepakduggi@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+celery = "^5.2.7"
+pymongo = "^4.3.3"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

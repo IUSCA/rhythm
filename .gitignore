@@ -1,0 +1,9 @@
+notebooks
+env.sh
+.env
+
+keys
+db
+dist
+
+__pycache__
