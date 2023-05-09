@@ -13,11 +13,17 @@ def duplicates(items):
     return list((Counter(items) - Counter(set(items))).keys())
 
 
+class WFNotFound(Exception):
+    pass
+
+
 class Workflow:
-    def __init__(self, celery_app, workflow_id=None, steps=None, name=None):
+    def __init__(self, celery_app, workflow_id=None, steps=None, name=None, app_id=None, description=None):
         self.app = celery_app
         db = self.app.backend.database
         self.wf_col = db.get_collection('workflow_meta')
+
+        assert workflow_id is not None or steps is not None, 'Either workflow_id or steps should not be None'
 
         if workflow_id is not None:
             # load from db
@@ -25,7 +31,7 @@ class Workflow:
             if res:
                 self.workflow = res
             else:
-                raise Exception(f'Workflow with id {workflow_id} is not found')
+                raise WFNotFound(f'Workflow with id {workflow_id} is not found')
         elif steps is not None:
             # create workflow object and save to db
             assert len(steps) > 0, 'steps is empty'
@@ -39,15 +45,19 @@ class Workflow:
             duplicate_names = duplicates(names)
             assert len(duplicate_names) == 0, f'Steps with duplicate names: {duplicate_names}'
 
+            assert name, 'name cannot be empty'
+            assert app_id, 'app_id cannot be empty'
             self.workflow = {
                 '_id': str(uuid.uuid4()),
                 'created_at': datetime.datetime.utcnow(),
                 'steps': steps,
-                'name': name
+                'name': name,
+                'app_id': app_id,
+                'description': description
             }
             self.wf_col.insert_one(self.workflow)
         else:
-            raise Exception('Either workflow_id or steps should not be None')
+            pass
 
     def start(self, *args, **kwargs):
         """
@@ -102,7 +112,7 @@ class Workflow:
         """
         Submit a new task in the step that has FAILED / REVOKED before and continue the workflow.
 
-        :param force: submit the task even if its status is not FAILED / REVOKED
+        :param force: submit the next task even if its status is not FAILED / REVOKED
         :param args: if the workflow stopped before creating a task instance then its args are not stored.
                      The new task will be triggered with given "args"
         :return: status of the resume operation and the restart if successful
@@ -293,7 +303,7 @@ class Workflow:
         if res:
             self.workflow = res
         else:
-            raise Exception(f'Workflow with id {workflow_id} is not found')
+            raise WFNotFound(f'Workflow with id {workflow_id} is not found')
 
     def get_embellished_workflow(self, last_task_run=True, prev_task_runs=False):
         """
@@ -326,6 +336,8 @@ class Workflow:
         return {
             'id': self.workflow['_id'],
             'name': self.workflow.get('name', None),
+            'app_id': self.workflow.get('app_id', None),
+            'description': self.workflow.get('description', None),
             'created_at': self.workflow.get('created_at', None),
             'updated_at': self.workflow.get('updated_at', None),
             'status': status,
@@ -367,5 +379,3 @@ class WorkflowTask(Task):  # noqa
             self.update_state(state='PROGRESS',
                               meta=progress_obj
                               )
-
-
