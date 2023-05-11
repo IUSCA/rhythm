@@ -169,7 +169,7 @@ class Workflow:
             'task_id': task_id
         })
         self.update()
-        print(f'starting {step_name} with task id: {task_id}')
+        # print(f'starting {step_name} with task id: {task_id}')
 
     def on_step_success(self, retval: tuple, step_name: str) -> None:
         """
@@ -193,7 +193,7 @@ class Workflow:
             }
             # next_task.apply_async((retval[0],), kwargs)
             self.app.send_task(next_step['task'], (retval[0],), kwargs)
-            print(f'starting next step {next_step["name"]}')
+            # print(f'starting next step {next_step["name"]}')
 
     def update(self):
         """
@@ -358,7 +358,7 @@ class WorkflowTask(Task):  # noqa
         self.workflow = None
 
     def before_start(self, task_id, args, kwargs):
-        print(f'before_start, task_id:{task_id}, kwargs:{kwargs} name:{self.name}')
+        # print(f'before_start, task_id:{task_id}, kwargs:{kwargs} name:{self.name}')
         self.update_progress({})
 
         if 'workflow_id' in kwargs and 'step' in kwargs:
@@ -367,7 +367,7 @@ class WorkflowTask(Task):  # noqa
             self.workflow.on_step_start(kwargs['step'], task_id)
 
     def on_success(self, retval, task_id, args, kwargs):
-        print(f'on_success, task_id: {task_id}, kwargs: {kwargs}')
+        # print(f'on_success, task_id: {task_id}, kwargs: {kwargs}')
 
         if 'workflow_id' in kwargs and 'step' in kwargs:
             self.workflow.on_step_success(retval, kwargs['step'])
@@ -375,7 +375,7 @@ class WorkflowTask(Task):  # noqa
     def update_progress(self, progress_obj):
         # called_directly: This flag is set to true if the task was not executed by the worker.
         if not self.request.called_directly:
-            print(f'updating progress for {self.name}', progress_obj)
-            self.update_state(state='PROGRESS',
-                              meta=progress_obj
-                              )
+            self.update_state(
+                state='PROGRESS',
+                meta=progress_obj
+            )
