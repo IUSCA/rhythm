@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import datetime
 import itertools
 import json
@@ -98,8 +100,9 @@ class Workflow:
                 task_runs = step.get('task_runs', [])
                 if task_runs is not None and len(task_runs) > 0:
                     task_id = task_runs[-1]['task_id']
+                    # https://docs.celeryq.dev/en/stable/userguide/workers.html#revoke-revoking-tasks
                     self.app.control.revoke(task_id, terminate=True)
-                    print(f'revoked task: {task_id} in step-{i + 1} {step["name"]}')
+                    # print(f' revoked task: {task_id} in step-{i + 1} {step["name"]}')
                     return {
                         'paused': True,
                         'revoked_step': {
@@ -145,7 +148,7 @@ class Workflow:
                 }
                 # task.apply_async(task_args, kwargs)
                 self.app.send_task(step['task'], task_args, kwargs)
-                print(f'resuming step {step["name"]}')
+                # print(f' resuming step {step["name"]}')
                 return {
                     'resumed': True,
                     'restarted_step': {
@@ -160,20 +163,27 @@ class Workflow:
     def on_step_start(self, step_name: str, task_id: str) -> None:
         """
         Called by an instance of WorkflowTask before it starts work.
-        Updates the workflow object's step with the task_id and date_start
+        Updates the workflow object's step with the task_id and date_start.
+
+        If the task is resubmitted with the old task_id, task_runs will not be updated.
 
         :param step_name: name of the step that the task is running
         :param task_id: id of the task
         :return: None
         """
         step = self.get_step(step_name)
-        step['task_runs'] = step.get('task_runs', [])
-        step['task_runs'].append({
-            'date_start': datetime.datetime.utcnow(),
-            'task_id': task_id
-        })
-        self.update()
-        # print(f' starting {step_name} with task id: {task_id}')
+        task_runs = step.get('task_runs', [])
+
+        prev_task_ids_set = set(task_run.get('task_id', '') for task_run in task_runs)
+        if task_id not in prev_task_ids_set:
+            task_runs.append({
+                'date_start': datetime.datetime.utcnow(),
+                'task_id': task_id
+            })
+            self.update()
+            # print(f' starting {step_name} with task id: {task_id}')
+        else:
+            print(f'on_step_start {step_name} {task_id} already in prev task runs. not adding.')
 
     def on_step_success(self, retval: tuple, step_name: str) -> None:
         """
@@ -236,7 +246,7 @@ class Workflow:
         else:
             return celery.states.PENDING
 
-    def get_pending_step(self) -> tuple:
+    def get_pending_step(self) -> tuple[int, celery.states.state] | None:
         """
         finds the index of the first step whose status is not celery.states.SUCCESS
         if all steps have succeeded, it returns None
@@ -247,19 +257,19 @@ class Workflow:
 
     def get_workflow_status(self) -> celery.states.state:
         """
-        The workflow status is decided based on the status of the first step which is not done (FS).
-        - PENDING  - the first step is yet to be processed
-        - STARTED  - if status of FS is either of STARTED, RETRY, or PENDING
-        - PROGRESS - a step is running and has updated the task object with progress
-        - REVOKED  - running step is REVOKED, the Workflow is considered paused and can be resumed
-        - FAILURE  - FS has failed
+        The workflow status is decided based on the status of the first step which is not done (pending step).
+        - PENDING  - the pending step is the first step and is yet to be received by the worker
+        - STARTED  - else, if the status of the pending step is one of STARTED, RETRY, PENDING
+        - PROGRESS - a step is running and has updated the task object with its progress
+        - REVOKED  - the pending step was revoked, the Workflow is considered paused and can be resumed
+        - FAILURE  - the pending step was failed, the workflow is considered failed and can be resumed
         - SUCCESS  - all steps have succeeded
 
         :return: celery.states.state
         """
-        first_step_not_succeeded = self.get_pending_step()
-        if first_step_not_succeeded:
-            step_idx, task_status = first_step_not_succeeded
+        pending_step = self.get_pending_step()
+        if pending_step:
+            step_idx, task_status = pending_step
             if step_idx == 0 and task_status == celery.states.PENDING:
                 return celery.states.PENDING
             if task_status in [celery.states.STARTED, celery.states.RETRY, celery.states.PENDING]:
@@ -352,12 +362,11 @@ class Workflow:
 
 
 class WorkflowTask(Task):  # noqa
-    autoretry_for = (Exception,)  # retry for all exceptions
-    dont_autoretry_for = (NonRetryableException,)
-    max_retries = 3
-    default_retry_delay = 5  # wait for n seconds before adding the task back to the queue
-    add_to_parent = True
-    trail = True
+    # autoretry_for = (Exception,)  # retry for all exceptions
+    # dont_autoretry_for = (NonRetryableException,)
+    # max_retries = 3
+    # default_retry_delay = 5  # wait for n seconds before adding the task back to the queue
+    # trail = True
 
     def __init__(self):
         self.workflow = None
