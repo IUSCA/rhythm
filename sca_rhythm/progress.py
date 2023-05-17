@@ -115,11 +115,21 @@ def throttle(wait_time):
     return decorator
 
 
+def get_length(it):
+    if hasattr(it, '__len__'):
+        return len(it)
+    else:
+        try:
+            return it.__length_hint__()
+        except AttributeError:
+            return None
+
+
 class Progress:
     def __init__(self,
                  celery_task: WorkflowTask = None,
                  name: str = '',
-                 total: int = None,
+                 total: float = None,
                  units: str = None,
                  throttle_time: float = 1.0):
         self.celery_task = celery_task
@@ -128,8 +138,9 @@ class Progress:
         self.total = total
         self.eta = ETA()
         self.update = throttle(throttle_time)(self.update)
+        self.iter_count = 0
 
-    def update(self, done: int) -> dict:
+    def update(self, done: float) -> dict:
         fraction_done = None
         time_remaining_sec = None
         wt_avg_rate = None
@@ -155,35 +166,64 @@ class Progress:
             self.celery_task.update_progress(prog_obj)
         return prog_obj
 
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        elem = next(self.it)
+        self.iter_count += 1
+        self.update(done=self.iter_count)
+        return elem
+
+    def __call__(self, it, immediate: bool = True):
+        self.it = iter(it)
+        if self.total is None:
+            # try inferring total from the iterable
+            self.total = get_length(self.it)
+        if immediate:
+            self.update(done=0)
+        return self
+
 
 if __name__ == '__main__':
-    import random
+    def usage1():
+        import random
 
-    total = 100
-    done = 0
-    p = Progress(name='test', units='number', total=total)
-    start_time = time.perf_counter()
+        total = 100
+        done = 0
+        p = Progress(name='test', units='number', total=total)
+        start_time = time.perf_counter()
 
-    p.update(done=0)
-    while done < total:
-        time.sleep(1)
+        p.update(done=0)
+        while done < total:
+            time.sleep(1)
 
-        if done < 33:
-            increment = random.randint(1, 4)
-        elif done < 66:
-            increment = random.randint(4, 6)
-        else:
-            increment = random.randint(6, 8)
-        done = done + increment
-        progress_obj = p.update(done=done)
-        print(
-            round(time.perf_counter() - start_time),
-            increment,
-            progress_obj['done'],
-            round(progress_obj['fraction_done'], 2),
-            round(progress_obj['time_remaining_sec'], 2),
-            round(progress_obj['wt_avg_rate'], 2),
-            round(progress_obj['avg_rate'], 2))
+            if done < 33:
+                increment = random.randint(1, 4)
+            elif done < 66:
+                increment = random.randint(4, 6)
+            else:
+                increment = random.randint(6, 8)
+            done = done + increment
+            progress_obj = p.update(done=done)
+            print(
+                round(time.perf_counter() - start_time),
+                increment,
+                progress_obj['done'],
+                round(progress_obj['fraction_done'], 2),
+                round(progress_obj['time_remaining_sec'], 2),
+                round(progress_obj['wt_avg_rate'], 2),
+                round(progress_obj['avg_rate'], 2))
 
-    time_elapsed = time.perf_counter() - start_time
-    print('time_elapsed', time_elapsed, 'actual_avg_rate', total / time_elapsed)
+        time_elapsed = time.perf_counter() - start_time
+        print('time_elapsed', time_elapsed, 'actual_avg_rate', total / time_elapsed)
+
+
+    def usage2():
+        import random
+
+        p = Progress(name='test', units='number')
+
+        for i in p(range(100)):
+            time.sleep(random.random())
+            print(i)

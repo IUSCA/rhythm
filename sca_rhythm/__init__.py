@@ -17,6 +17,10 @@ class WFNotFound(Exception):
     pass
 
 
+class NonRetryableException(Exception):
+    pass
+
+
 class Workflow:
     def __init__(self, celery_app, workflow_id=None, steps=None, name=None, app_id=None, description=None):
         self.app = celery_app
@@ -40,7 +44,7 @@ class Workflow:
                 assert len(step['name']) > 0, f'step - {i} name is empty'
                 assert 'task' in step, f'step - {i} does not have "task" key'
                 # assert step['task'] in self.app.tasks, \
-                #     f'step - {i} Task {step["task"]} is not registered in the celery application'
+                #     f' step - {i} Task {step["task"]} is not registered in the celery application'
             names = [step['name'] for step in steps]
             duplicate_names = duplicates(names)
             assert len(duplicate_names) == 0, f'Steps with duplicate names: {duplicate_names}'
@@ -169,7 +173,7 @@ class Workflow:
             'task_id': task_id
         })
         self.update()
-        # print(f'starting {step_name} with task id: {task_id}')
+        # print(f' starting {step_name} with task id: {task_id}')
 
     def on_step_success(self, retval: tuple, step_name: str) -> None:
         """
@@ -193,7 +197,7 @@ class Workflow:
             }
             # next_task.apply_async((retval[0],), kwargs)
             self.app.send_task(next_step['task'], (retval[0],), kwargs)
-            # print(f'starting next step {next_step["name"]}')
+            # print(f' starting next step {next_step["name"]}')
 
     def update(self):
         """
@@ -348,9 +352,10 @@ class Workflow:
 
 
 class WorkflowTask(Task):  # noqa
-    # autoretry_for = (Exception,)  # retry for all exceptions
-    # max_retries = 3
-    # default_retry_delay = 5  # wait for n seconds before adding the task back to the queue
+    autoretry_for = (Exception,)  # retry for all exceptions
+    dont_autoretry_for = (NonRetryableException,)
+    max_retries = 3
+    default_retry_delay = 5  # wait for n seconds before adding the task back to the queue
     add_to_parent = True
     trail = True
 
@@ -358,8 +363,14 @@ class WorkflowTask(Task):  # noqa
         self.workflow = None
 
     def before_start(self, task_id, args, kwargs):
-        # print(f'before_start, task_id:{task_id}, kwargs:{kwargs} name:{self.name}')
-        self.update_progress({})
+        # print(f' before_start, task_id:{task_id}, kwargs:{kwargs} name:{self.name}')
+
+        # A task's result in the backend is not updated until the tasks succeeds, fails, revoked
+        # or updated through code after it start execution.
+        # To the observers that task will appear to be in a pending state.
+        # Programmatically setting the state to PROGRESS before starting execution.
+        # setting task_track_started=True accomplishes the same while setting state as started. (yet to be tested)
+        # self.update_progress({})
 
         if 'workflow_id' in kwargs and 'step' in kwargs:
             workflow_id = kwargs['workflow_id']
@@ -367,7 +378,7 @@ class WorkflowTask(Task):  # noqa
             self.workflow.on_step_start(kwargs['step'], task_id)
 
     def on_success(self, retval, task_id, args, kwargs):
-        # print(f'on_success, task_id: {task_id}, kwargs: {kwargs}')
+        # print(f' on_success, task_id: {task_id}, kwargs: {kwargs}')
 
         if 'workflow_id' in kwargs and 'step' in kwargs:
             self.workflow.on_step_success(retval, kwargs['step'])
@@ -376,6 +387,6 @@ class WorkflowTask(Task):  # noqa
         # called_directly: This flag is set to true if the task was not executed by the worker.
         if not self.request.called_directly:
             self.update_state(
-                state='PROGRESS',
+                state='STARTED',
                 meta=progress_obj
             )
