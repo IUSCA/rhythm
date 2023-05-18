@@ -23,6 +23,22 @@ class NonRetryableException(Exception):
     pass
 
 
+def _validate_args(steps, name, app_id):
+    assert len(steps) > 0, 'steps is empty'
+    for i, step in enumerate(steps):
+        assert 'name' in step, f'step - {i} does not have "name" key'
+        assert len(step['name']) > 0, f'step - {i} name is empty'
+        assert 'task' in step, f'step - {i} does not have "task" key'
+        # assert step['task'] in self.app.tasks, \
+        #     f' step - {i} Task {step["task"]} is not registered in the celery application'
+    names = [step['name'] for step in steps]
+    duplicate_names = duplicates(names)
+    assert len(duplicate_names) == 0, f'Steps with duplicate names: {duplicate_names}'
+
+    assert name, 'name cannot be empty'
+    assert app_id, 'app_id cannot be empty'
+
+
 class Workflow:
     def __init__(self, celery_app, workflow_id=None, steps=None, name=None, app_id=None, description=None):
         self.app = celery_app
@@ -38,21 +54,9 @@ class Workflow:
                 self.workflow = res
             else:
                 raise WFNotFound(f'Workflow with id {workflow_id} is not found')
-        elif steps is not None:
+        else:  # steps is not None:
             # create workflow object and save to db
-            assert len(steps) > 0, 'steps is empty'
-            for i, step in enumerate(steps):
-                assert 'name' in step, f'step - {i} does not have "name" key'
-                assert len(step['name']) > 0, f'step - {i} name is empty'
-                assert 'task' in step, f'step - {i} does not have "task" key'
-                # assert step['task'] in self.app.tasks, \
-                #     f' step - {i} Task {step["task"]} is not registered in the celery application'
-            names = [step['name'] for step in steps]
-            duplicate_names = duplicates(names)
-            assert len(duplicate_names) == 0, f'Steps with duplicate names: {duplicate_names}'
-
-            assert name, 'name cannot be empty'
-            assert app_id, 'app_id cannot be empty'
+            _validate_args(steps, name, app_id)
             self.workflow = {
                 '_id': str(uuid.uuid4()),
                 'created_at': datetime.datetime.utcnow(),
@@ -62,8 +66,6 @@ class Workflow:
                 'description': description
             }
             self.wf_col.insert_one(self.workflow)
-        else:
-            pass
 
     def start(self, *args, **kwargs):
         """
