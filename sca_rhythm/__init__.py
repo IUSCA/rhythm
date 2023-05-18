@@ -172,18 +172,18 @@ class Workflow:
         :return: None
         """
         step = self.get_step(step_name)
-        task_runs = step.get('task_runs', [])
+        step['task_runs'] = step.get('task_runs', [])
 
-        prev_task_ids_set = set(task_run.get('task_id', '') for task_run in task_runs)
+        prev_task_ids_set = set(task_run.get('task_id', '') for task_run in step['task_runs'])
         if task_id not in prev_task_ids_set:
-            task_runs.append({
+            step['task_runs'].append({
                 'date_start': datetime.datetime.utcnow(),
                 'task_id': task_id
             })
             self.update()
             # print(f' starting {step_name} with task id: {task_id}')
-        else:
-            print(f'on_step_start {step_name} {task_id} already in prev task runs. not adding.')
+        # else:
+        #     print(f' on_step_start {step_name} {task_id} already in prev task runs. not adding.')
 
     def on_step_success(self, retval: tuple, step_name: str) -> None:
         """
