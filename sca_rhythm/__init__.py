@@ -362,14 +362,13 @@ class Workflow:
 
 
 class WorkflowTask(Task):  # noqa
-    # autoretry_for = (Exception,)  # retry for all exceptions
-    # dont_autoretry_for = (NonRetryableException,)
-    # max_retries = 3
-    # default_retry_delay = 5  # wait for n seconds before adding the task back to the queue
     # trail = True
 
     def __init__(self):
         self.workflow = None
+        self.id = None
+        self.workflow_id = None
+        self.step = None
 
     def before_start(self, task_id, args, kwargs):
         # print(f' before_start, task_id:{task_id}, kwargs:{kwargs} name:{self.name}')
@@ -381,10 +380,15 @@ class WorkflowTask(Task):  # noqa
         # setting task_track_started=True accomplishes the same while setting state as started. (yet to be tested)
         # self.update_progress({})
 
+        self.id = task_id
+
         if 'workflow_id' in kwargs and 'step' in kwargs:
             workflow_id = kwargs['workflow_id']
+            step = kwargs['step']
+            self.workflow_id = workflow_id
+            self.step = step
             self.workflow = Workflow(self.app, workflow_id)
-            self.workflow.on_step_start(kwargs['step'], task_id)
+            self.workflow.on_step_start(step, task_id)
 
     def on_success(self, retval, task_id, args, kwargs):
         # print(f' on_success, task_id: {task_id}, kwargs: {kwargs}')

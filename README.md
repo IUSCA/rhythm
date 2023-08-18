@@ -6,6 +6,14 @@ The following are the features of Rhythm workflows:
 - A workflow can be paused and resumed later.
 - You can keep track of which step is currently running, as well as its progress.
 
+### Installation
+
+```
+pip install sca-rhythm
+```
+
+see on [pypi](https://pypi.org/project/sca-rhythm/)
+
 ### Prerequisites
 
 Celery app should be configured with a mongo database backend.
