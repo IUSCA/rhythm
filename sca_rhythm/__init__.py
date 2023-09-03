@@ -298,6 +298,11 @@ class Workflow:
                     task['result'] = json.loads(task['result'])
                 except Exception as e:
                     print('unable to parse result json', e, task['_id'], task['result'])
+            if 'date_done' in task:
+                try:
+                    task['date_done'] = datetime.datetime.strptime(task['date_done'], "%Y-%m-%dT%H:%M:%S.%f")
+                except Exception as e:
+                    print('unable to convert date_done date string into date object', e, task['_id'], task['date_done'])
 
         return task
 
