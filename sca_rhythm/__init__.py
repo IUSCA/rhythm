@@ -77,11 +77,13 @@ class Workflow:
         task_name = step['task']
         task_queue = step.get('queue', None)
 
-        task_kwargs = task_kwargs or {}
-        task_kwargs['workflow_id'] = self.workflow['_id']
-        task_kwargs['step'] = step['name']
+        # kwargs precedence: 'workflow_id', 'step' > keys in task_kwargs > keys in step['kwargs']
+        _task_kwargs = step.get('kwargs', {})
+        _task_kwargs.update(task_kwargs or {})
+        _task_kwargs['workflow_id'] = self.workflow['_id']
+        _task_kwargs['step'] = step['name']
 
-        self.app.send_task(name=task_name, args=task_args, kwargs=task_kwargs, queue=task_queue, **kwargs)
+        self.app.send_task(name=task_name, args=task_args, kwargs=_task_kwargs, queue=task_queue, **kwargs)
 
     def start(self, *args, **kwargs):
         """
