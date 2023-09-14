@@ -117,6 +117,7 @@ class Workflow:
                     # https://docs.celeryq.dev/en/stable/userguide/workers.html#revoke-revoking-tasks
                     self.app.control.revoke(task_id, terminate=True)
                     # print(f' revoked task: {task_id} in step-{i + 1} {step["name"]}')
+                    self.update()
                     return {
                         'paused': True,
                         'revoked_step': {
@@ -196,7 +197,7 @@ class Workflow:
 
     def on_step_success(self, retval: tuple, step_name: str) -> None:
         """
-        Called by an instance of WorkflowTask before after it completes work.
+        Called by an instance of WorkflowTask after it completes work.
         calls the next step (if there is one) with the first element of the retval as an argument.
 
         :param retval: the return value of the task of tuple type. the first element is sent to the next step as an arg
@@ -204,12 +205,16 @@ class Workflow:
         :return:
         """
         # self.update_step_end_time(step_name)
+        self.update()
         next_step = self.get_next_step(step_name)
 
         # apply next task with retval
         if next_step:
             self.wf_send_task(next_step, (retval[0],))
             # print(f' starting next step {next_step["name"]}')
+
+    def on_step_failure(self):
+        self.update()
 
     def update(self):
         """
@@ -402,6 +407,11 @@ class WorkflowTask(Task):  # noqa
 
         if 'workflow_id' in kwargs and 'step' in kwargs:
             self.workflow.on_step_success(retval, kwargs['step'])
+
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        if 'workflow_id' in kwargs and 'step' in kwargs:
+            # self.workflow.on_step_failure(exc, kwargs['step'])
+            self.workflow.on_step_failure()
 
     def update_progress(self, progress_obj):
         # called_directly: This flag is set to true if the task was not executed by the worker.
