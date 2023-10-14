@@ -131,16 +131,19 @@ class Progress:
                  name: str = '',
                  total: float = None,
                  units: str = None,
-                 throttle_time: float = 1.0):
+                 throttle_time: float = 1.0,
+                 unit_scale: float = 1.0):
         self.celery_task = celery_task
         self.name = name
         self.units = units
-        self.total = total
+        self.total = total * unit_scale if total is not None else None
         self.eta = ETA()
         self.update = throttle(throttle_time)(self.update)
         self.iter_count = 0
+        self.unit_scale = unit_scale
 
     def update(self, done: float) -> dict:
+        done = done * self.unit_scale
         fraction_done = None
         time_remaining_sec = None
         wt_avg_rate = None

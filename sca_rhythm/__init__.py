@@ -69,7 +69,8 @@ class Workflow:
                 'steps': steps,
                 'name': name,
                 'app_id': app_id,
-                'description': description
+                'description': description,
+                '_status': celery.states.PENDING
             }
             self.wf_col.insert_one(self.workflow)
 
@@ -77,11 +78,12 @@ class Workflow:
         task_name = step['task']
         task_queue = step.get('queue', None)
 
-        # kwargs precedence: 'workflow_id', 'step' > keys in task_kwargs > keys in step['kwargs']
+        # kwargs precedence: 'workflow_id', 'step', 'wf_app_id' > keys in task_kwargs > keys in step['kwargs']
         _task_kwargs = step.get('kwargs', {})
         _task_kwargs.update(task_kwargs or {})
         _task_kwargs['workflow_id'] = self.workflow['_id']
         _task_kwargs['step'] = step['name']
+        _task_kwargs['app_id'] = self.workflow['app_id']
 
         self.app.send_task(name=task_name, args=task_args, kwargs=_task_kwargs, queue=task_queue, **kwargs)
 
@@ -117,6 +119,7 @@ class Workflow:
                     # https://docs.celeryq.dev/en/stable/userguide/workers.html#revoke-revoking-tasks
                     self.app.control.revoke(task_id, terminate=True)
                     # print(f' revoked task: {task_id} in step-{i + 1} {step["name"]}')
+                    self.workflow['_status'] = celery.states.REVOKED
                     self.update()
                     return {
                         'paused': True,
@@ -190,10 +193,12 @@ class Workflow:
                 'date_start': datetime.datetime.utcnow(),
                 'task_id': task_id
             })
-            self.update()
+
             # print(f' starting {step_name} with task id: {task_id}')
         # else:
         #     print(f' on_step_start {step_name} {task_id} already in prev task runs. not adding.')
+        self.workflow['_status'] = celery.states.STARTED
+        self.update()
 
     def on_step_success(self, retval: tuple, step_name: str) -> None:
         """
@@ -204,16 +209,22 @@ class Workflow:
         :param step_name: name of the step that the task is running
         :return:
         """
-        # self.update_step_end_time(step_name)
-        self.update()
+
         next_step = self.get_next_step(step_name)
 
-        # apply next task with retval
-        if next_step:
-            self.wf_send_task(next_step, (retval[0],))
-            # print(f' starting next step {next_step["name"]}')
+        try:
+            # apply next task with retval
+            if next_step:
+                self.wf_send_task(next_step, (retval[0],))
+                # print(f' starting next step {next_step["name"]}')
+            else:
+                # this is the last step and it succeeded
+                self.workflow['_status'] = celery.states.SUCCESS
+        finally:
+            self.update()
 
     def on_step_failure(self):
+        self.workflow['_status'] = celery.states.FAILURE
         self.update()
 
     def update(self):
@@ -224,13 +235,13 @@ class Workflow:
         self.workflow['updated_at'] = datetime.datetime.utcnow()
         self.wf_col.update_one({'_id': self.workflow['_id']}, {'$set': self.workflow})
 
-    def update_step_end_time(self, step_name):
-        step = self.get_step(step_name)
-        task_runs = step.get('task_runs', [])
-        if len(task_runs) > 0:
-            last_task_run = task_runs[-1]
-            last_task_run['end_time'] = datetime.datetime.utcnow()
-        self.update()
+    # def update_step_end_time(self, step_name):
+    #     step = self.get_step(step_name)
+    #     task_runs = step.get('task_runs', [])
+    #     if len(task_runs) > 0:
+    #         last_task_run = task_runs[-1]
+    #         last_task_run['end_time'] = datetime.datetime.utcnow()
+    #     self.update()
 
     def get_step_status(self, step: dict) -> celery.states.state:
         """
@@ -242,7 +253,6 @@ class Workflow:
         celery.states.REVOKED
         celery.states.STARTED
         celery.states.SUCCESS
-        PROGRESS
 
         """
         task_runs = step.get('task_runs', [])
@@ -264,13 +274,14 @@ class Workflow:
 
     def get_workflow_status(self) -> celery.states.state:
         """
-        The workflow status is decided based on the status of the first step which is not done (pending step).
-        - PENDING  - the pending step is the first step and is yet to be received by the worker
-        - STARTED  - else, if the status of the pending step is one of STARTED, RETRY, PENDING
-        - PROGRESS - a step is running and has updated the task object with its progress
-        - REVOKED  - the pending step was revoked, the Workflow is considered paused and can be resumed
-        - FAILURE  - the pending step was failed, the workflow is considered failed and can be resumed
-        - SUCCESS  - all steps have succeeded
+        The workflow status is a summative status that is determined by the status of the initial step that is not marked as "
+        SUCCESS," which is referred to as a "pending step".
+
+        - PENDING - the pending step is the first step in the workflow and its status is pending.
+        - STARTED - the status of the pending step is one of STARTED, RETRY, PENDING.
+        - REVOKED - the pending step was revoked, the workflow can be resumed.
+        - FAILURE - the pending step was failed, the workflow can be resumed.
+        - SUCCESS - all steps have succeeded.
 
         :return: celery.states.state
         """
@@ -405,11 +416,12 @@ class WorkflowTask(Task):  # noqa
     def on_success(self, retval, task_id, args, kwargs):
         # print(f' on_success, task_id: {task_id}, kwargs: {kwargs}')
 
-        if 'workflow_id' in kwargs and 'step' in kwargs:
+        if self.workflow is not None:
             self.workflow.on_step_success(retval, kwargs['step'])
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
-        if 'workflow_id' in kwargs and 'step' in kwargs:
+        # print('in on_failure', exc, task_id, args, kwargs, einfo)
+        if self.workflow is not None:
             # self.workflow.on_step_failure(exc, kwargs['step'])
             self.workflow.on_step_failure()
 
