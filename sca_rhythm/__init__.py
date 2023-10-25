@@ -79,7 +79,7 @@ class Workflow:
         task_queue = step.get('queue', None)
 
         # kwargs precedence: 'workflow_id', 'step', 'wf_app_id' > keys in task_kwargs > keys in step['kwargs']
-        _task_kwargs = step.get('kwargs', {})
+        _task_kwargs = step.get('kwargs', {}) or {}
         _task_kwargs.update(task_kwargs or {})
         _task_kwargs['workflow_id'] = self.workflow['_id']
         _task_kwargs['step'] = step['name']
