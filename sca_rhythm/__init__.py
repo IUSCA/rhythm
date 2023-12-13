@@ -46,6 +46,8 @@ def _validate_args(steps, name, app_id):
 
 
 class Workflow:
+    RESUME_LOCK_ATTR = 'resume_lock'
+
     def __init__(self, celery_app, workflow_id=None, steps=None, name=None, app_id=None, description=None):
         self.app = celery_app
         db = self.app.backend.database
@@ -99,7 +101,7 @@ class Workflow:
         first_step = self.workflow['steps'][0]
         self.wf_send_task(first_step, args, kwargs)
 
-    def pause(self):
+    def pause(self, refresh=True):
         """
         Revoke the current running task.
 
@@ -108,6 +110,10 @@ class Workflow:
         """
         # find running task
         # revoke it
+
+        if refresh:
+            self.refresh()
+
         first_step_not_succeeded = self.get_pending_step()
         if first_step_not_succeeded:
             i, status = first_step_not_succeeded
@@ -133,7 +139,7 @@ class Workflow:
             'paused': False
         }
 
-    def resume(self, force: bool = False, args: list = None) -> dict:
+    def resume(self, force: bool = False, args: list = None, refresh=True) -> dict:
         """
         Submit a new task in the step that has FAILED / REVOKED before and continue the workflow.
 
@@ -148,27 +154,35 @@ class Workflow:
         # TODO: if the pending step is not the first step, and it has never run before,
         #  then get the args from the previous step
         # cannot resume the step automatically, that has never started, provide args
-        first_step_not_succeeded = self.get_pending_step()
-        if first_step_not_succeeded:
-            i, status = first_step_not_succeeded
-            if (status in [celery.states.FAILURE, celery.states.REVOKED]) or force:
-                step = self.workflow['steps'][i]
-                # task = self.app.tasks[step['task']]
 
-                # failed / revoked task instance
-                task_inst = self.get_last_run_task_instance(step)
-                assert not (task_inst is None and args is None), 'no args are provided and there is no last run task'
-                task_args = task_inst['args'] if task_inst is not None else args
+        if refresh:
+            self.refresh()
 
-                self.wf_send_task(step, task_args)
-                # print(f' resuming step {step["name"]}')
-                return {
-                    'resumed': True,
-                    'restarted_step': {
-                        'name': step['name'],
-                        'task': step['task']
+        if not self.is_resume_locked():
+            first_step_not_succeeded = self.get_pending_step()
+            if first_step_not_succeeded:
+                i, status = first_step_not_succeeded
+                if (status in [celery.states.FAILURE, celery.states.REVOKED]) or force:
+                    step = self.workflow['steps'][i]
+
+                    # failed / revoked task instance
+                    task_inst = self.get_last_run_task_instance(step)
+                    assert not (
+                            task_inst is None and args is None), 'no args are provided and there is no last run task'
+                    task_args = task_inst['args'] if task_inst is not None else args
+
+                    self.wf_send_task(step, task_args)
+                    self.lock_resume()
+                    self.update()
+
+                    # print(f' resuming step {step["name"]}')
+                    return {
+                        'resumed': True,
+                        'restarted_step': {
+                            'name': step['name'],
+                            'task': step['task']
+                        }
                     }
-                }
         return {
             'resumed': False
         }
@@ -198,6 +212,7 @@ class Workflow:
         # else:
         #     print(f' on_step_start {step_name} {task_id} already in prev task runs. not adding.')
         self.workflow['_status'] = celery.states.STARTED
+        self.unlock_resume()
         self.update()
 
     def on_step_success(self, retval: tuple, step_name: str) -> None:
@@ -234,6 +249,16 @@ class Workflow:
         """
         self.workflow['updated_at'] = datetime.datetime.utcnow()
         self.wf_col.update_one({'_id': self.workflow['_id']}, {'$set': self.workflow})
+
+    def lock_resume(self):
+        self.workflow[self.RESUME_LOCK_ATTR] = datetime.datetime.utcnow()
+
+    def is_resume_locked(self):
+        return bool(self.workflow.get(self.RESUME_LOCK_ATTR, None))
+
+    def unlock_resume(self):
+        if self.RESUME_LOCK_ATTR in self.workflow:
+            self.workflow[self.RESUME_LOCK_ATTR] = None
 
     # def update_step_end_time(self, step_name):
     #     step = self.get_step(step_name)
@@ -274,8 +299,9 @@ class Workflow:
 
     def get_workflow_status(self) -> celery.states.state:
         """
-        The workflow status is a summative status that is determined by the status of the initial step that is not marked as "
-        SUCCESS," which is referred to as a "pending step".
+        The workflow status is a summative status that is determined by the
+        status of the initial step that is not marked as "SUCCESS"
+        which is referred to as a "pending step".
 
         - PENDING - the pending step is the first step in the workflow and its status is pending.
         - STARTED - the status of the pending step is one of STARTED, RETRY, PENDING.
@@ -342,16 +368,19 @@ class Workflow:
         else:
             raise WFNotFound(f'Workflow with id {workflow_id} is not found')
 
-    def get_embellished_workflow(self, last_task_run=True, prev_task_runs=False):
+    def get_embellished_workflow(self, last_task_run=True, prev_task_runs=False, refresh=True):
         """
 
-        :param last_task_run: include last run task for each step: boolean
-        :param prev_task_runs: include previous task runs for each step: boolean
+        @param last_task_run: include last run task for each step: boolean
+        @param prev_task_runs: include previous task runs for each step: boolean
+        @param refresh: fetch latest workflow state from db
         :return:
+
         """
-        self.refresh()
+        if refresh:
+            self.refresh()
         status = self.get_workflow_status()
-        pending_step_idx, pending_step_status = self.get_pending_step() or (None, None)
+        pending_step_idx, _ = self.get_pending_step() or (None, None)
         steps = []
         for step in self.workflow['steps']:
             emb_step = {
