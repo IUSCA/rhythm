@@ -76,9 +76,12 @@ class Workflow:
             }
             self.wf_col.insert_one(self.workflow)
 
-    def wf_send_task(self, step: dict, task_args: list | tuple = None, task_kwargs: dict = None, **kwargs):
+    def wf_send_task(self, step: dict, step_position: int, task_args: list | tuple = None, task_kwargs: dict = None,
+                     **kwargs):
         task_name = step['task']
         task_queue = step.get('queue', None)
+        _task_priority = step.get('priority', step_position)
+        task_priority = max(0, min(_task_priority, 9))  # between 0 and 9
 
         # kwargs precedence: 'workflow_id', 'step', 'wf_app_id' > keys in task_kwargs > keys in step['kwargs']
         _task_kwargs = step.get('kwargs', {}) or {}
@@ -87,7 +90,9 @@ class Workflow:
         _task_kwargs['step'] = step['name']
         _task_kwargs['app_id'] = self.workflow['app_id']
 
-        self.app.send_task(name=task_name, args=task_args, kwargs=_task_kwargs, queue=task_queue, **kwargs)
+        # print(f'sending task with priority: {task_priority}')
+        self.app.send_task(name=task_name, args=task_args, kwargs=_task_kwargs,
+                           queue=task_queue, priority=task_priority, **kwargs)
 
     def start(self, *args, **kwargs):
         """
@@ -99,7 +104,7 @@ class Workflow:
         :return: None
         """
         first_step = self.workflow['steps'][0]
-        self.wf_send_task(first_step, args, kwargs)
+        self.wf_send_task(first_step, step_position=1, task_args=args, task_kwargs=kwargs)
 
     def pause(self, refresh=True):
         """
@@ -171,7 +176,7 @@ class Workflow:
                             task_inst is None and args is None), 'no args are provided and there is no last run task'
                     task_args = task_inst['args'] if task_inst is not None else args
 
-                    self.wf_send_task(step, task_args)
+                    self.wf_send_task(step, step_position=i + 1, task_args=task_args)
                     self.lock_resume()
                     self.update()
 
@@ -225,12 +230,13 @@ class Workflow:
         :return:
         """
 
-        next_step = self.get_next_step(step_name)
+        next_step_idx = self.get_next_step_idx(step_name)
 
         try:
             # apply next task with retval
-            if next_step:
-                self.wf_send_task(next_step, (retval[0],))
+            if next_step_idx is not None:
+                next_step = self.workflow['steps'][next_step_idx]
+                self.wf_send_task(next_step, step_position=next_step_idx + 1, task_args=(retval[0],))
                 # print(f' starting next step {next_step["name"]}')
             else:
                 # this is the last step and it succeeded
@@ -327,10 +333,19 @@ class Workflow:
         it = itertools.dropwhile(lambda step: step['name'] != step_name, self.workflow['steps'])
         return next(it, None)
 
-    def get_next_step(self, step_name):
-        it = itertools.dropwhile(lambda step: step['name'] != step_name, self.workflow['steps'])
-        skip_one_it = itertools.islice(it, 1, None)
-        return next(skip_one_it, None)
+    def get_next_step_idx(self, step_name: str) -> int | None:
+        # it = itertools.dropwhile(lambda step: step['name'] != step_name, self.workflow['steps'])
+        # skip_one_it = itertools.islice(it, 1, None)
+        # return next(skip_one_it, None)
+
+        curr_step_idx = None
+        for i, step in enumerate(self.workflow['steps']):
+            if step['name'] == step_name:
+                curr_step_idx = i
+                break
+        if curr_step_idx is not None and curr_step_idx < len(self.workflow['steps']) - 1:
+            return curr_step_idx + 1
+        return None
 
     def get_task_instance(self, task_id, date_start=None):
         col = self.app.backend.collection
@@ -409,7 +424,8 @@ class Workflow:
             'status': status,
             'steps_done': pending_step_idx if pending_step_idx is not None else len(steps),
             'total_steps': len(steps),
-            'steps': steps
+            'steps': steps,
+            self.RESUME_LOCK_ATTR: self.workflow.get(self.RESUME_LOCK_ATTR, None)
         }
 
 

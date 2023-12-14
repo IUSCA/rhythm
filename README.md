@@ -70,20 +70,36 @@ steps = [
     {
         'name': 'inspect',
         'task': 'tasks.inspect'
+        'queue': 'q1',
     },
     {
         'name': 'archive',
-        'task': 'tasks.archive'
+        'task': 'tasks.archive',
+        'queue': 'q1',
     },
     {
         'name': 'stage',
-        'task': 'tasks.stage'
+        'task': 'tasks.stage',
+        'queue': 'q2',
+        'priority': 5
     }
 ]
 
-wf = Workflow(app, steps=steps, name='archive_batch')
+wf = Workflow(app, steps=steps, name='archive_batch', app_id='app')
 wf.start('batch-id-test')
 ```
+
+The provided code defines a workflow consisting of multiple steps, each representing a task to be executed in a specific order. The workflow is initiated with a unique identifier, and its steps are configured with task names, associated queues, and optional priorities.
+
+Each step is represented as a dictionary with the following properties:
+
+- name: A descriptive name for the step.
+- task: The task to be executed, specified as a string containing the task's import path.
+- queue: The Celery queue to which the task should be sent.
+- priority (optional): An integer (between 0 and 9) indicating the priority of the task in the queue. If not provided, the priority is set to the step's position in the workflow. If there are more than 9 tasks, tasks in positions 10 and above will all recieve priority 9.
+
+**Priority Scheme**:
+The priority scheme is designed to optimize the execution of tasks within the same workflow. Tasks with higher priorities are executed before those with lower priorities. If no priority is specified, the default priority is set to the step's position in the workflow. This scheme ensures that tasks within a workflow are executed sequentially with increasing priority, minimizing the likelihood of interweaving tasks from different workflows.
 
 ### Pause and Resume Workflows
 
