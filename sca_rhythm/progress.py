@@ -11,7 +11,7 @@ class ExponentialWeightedAverage:
         Class for computing an exponential moving average.
 
         Args:
-            alpha: The weight given to the most recent data.
+            alpha: The weight given to the previous average.
             start: The starting value of the moving average.
         """
         self.s = start

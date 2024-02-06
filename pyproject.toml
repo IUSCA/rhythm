@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "sca_rhythm"
-version = "0.6.14"
+version = "0.6.15"
 description = "Create and manage workflows using Celery tasks"
 authors = ["Deepak Duggirala <deepakduggi@gmail.com>"]
 readme = "README.md"
